@@ -1,0 +1,378 @@
+{
+  "version": 1,
+  "author": "Trevor Sheehan",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "wokwi-arduino-uno",
+      "id": "uno",
+      "top": 0,
+      "left": 0,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-74hc595",
+      "id": "shiftreg",
+      "top": -140,
+      "left": 260,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-7segment",
+      "id": "seg4",
+      "top": -320,
+      "left": 200,
+      "attrs": {
+        "common": "cathode",
+        "digits": "4"
+      }
+    },
+    {
+      "type": "wokwi-7segment",
+      "id": "seg1",
+      "top": -320,
+      "left": 520,
+      "attrs": {
+        "common": "cathode",
+        "digits": "1"
+      }
+    },
+    {
+      "type": "wokwi-ds1307",
+      "id": "rtc",
+      "top": 140,
+      "left": 400,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": -60,
+      "left": 460,
+      "attrs": {
+        "value": "220"
+      },
+      "rotate": 90
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r2",
+      "top": -20,
+      "left": 460,
+      "attrs": {
+        "value": "220"
+      },
+      "rotate": 90
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r3",
+      "top": 20,
+      "left": 460,
+      "attrs": {
+        "value": "220"
+      },
+      "rotate": 90
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r4",
+      "top": 60,
+      "left": 460,
+      "attrs": {
+        "value": "220"
+      },
+      "rotate": 90
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r5",
+      "top": 100,
+      "left": 460,
+      "attrs": {
+        "value": "220"
+      },
+      "rotate": 90
+    },
+    {
+      "type": "wokwi-ky-040",
+      "id": "enc",
+      "top": 260,
+      "left": 40,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-buzzer",
+      "id": "bz",
+      "top": 240,
+      "left": 320,
+      "attrs": {}
+    }
+  ],
+  "connections": [
+    [
+      "shiftreg:VCC",
+      "uno:5V",
+      "red",
+      []
+    ],
+    [
+      "shiftreg:MR",
+      "uno:5V",
+      "red",
+      []
+    ],
+    [
+      "shiftreg:GND",
+      "uno:GND.1",
+      "black",
+      []
+    ],
+    [
+      "shiftreg:OE",
+      "uno:GND.1",
+      "black",
+      []
+    ],
+    [
+      "shiftreg:DS",
+      "uno:2",
+      "green",
+      []
+    ],
+    [
+      "shiftreg:STCP",
+      "uno:3",
+      "blue",
+      []
+    ],
+    [
+      "shiftreg:SHCP",
+      "uno:4",
+      "yellow",
+      []
+    ],
+    [
+      "shiftreg:Q0",
+      "seg4:A",
+      "gray",
+      []
+    ],
+    [
+      "shiftreg:Q0",
+      "seg1:A",
+      "gray",
+      []
+    ],
+    [
+      "shiftreg:Q1",
+      "seg4:B",
+      "gray",
+      []
+    ],
+    [
+      "shiftreg:Q1",
+      "seg1:B",
+      "gray",
+      []
+    ],
+    [
+      "shiftreg:Q2",
+      "seg4:C",
+      "gray",
+      []
+    ],
+    [
+      "shiftreg:Q2",
+      "seg1:C",
+      "gray",
+      []
+    ],
+    [
+      "shiftreg:Q3",
+      "seg4:D",
+      "gray",
+      []
+    ],
+    [
+      "shiftreg:Q3",
+      "seg1:D",
+      "gray",
+      []
+    ],
+    [
+      "shiftreg:Q4",
+      "seg4:E",
+      "gray",
+      []
+    ],
+    [
+      "shiftreg:Q4",
+      "seg1:E",
+      "gray",
+      []
+    ],
+    [
+      "shiftreg:Q5",
+      "seg4:F",
+      "gray",
+      []
+    ],
+    [
+      "shiftreg:Q5",
+      "seg1:F",
+      "gray",
+      []
+    ],
+    [
+      "shiftreg:Q6",
+      "seg4:G",
+      "gray",
+      []
+    ],
+    [
+      "shiftreg:Q6",
+      "seg1:G",
+      "gray",
+      []
+    ],
+    [
+      "shiftreg:Q7",
+      "seg4:DP",
+      "gray",
+      []
+    ],
+    [
+      "shiftreg:Q7",
+      "seg1:DP",
+      "gray",
+      []
+    ],
+    [
+      "uno:5",
+      "r1:1",
+      "orange",
+      []
+    ],
+    [
+      "r1:2",
+      "seg4:DIG1",
+      "orange",
+      []
+    ],
+    [
+      "uno:6",
+      "r2:1",
+      "orange",
+      []
+    ],
+    [
+      "r2:2",
+      "seg4:DIG2",
+      "orange",
+      []
+    ],
+    [
+      "uno:7",
+      "r3:1",
+      "orange",
+      []
+    ],
+    [
+      "r3:2",
+      "seg4:DIG3",
+      "orange",
+      []
+    ],
+    [
+      "uno:8",
+      "r4:1",
+      "orange",
+      []
+    ],
+    [
+      "r4:2",
+      "seg4:DIG4",
+      "orange",
+      []
+    ],
+    [
+      "uno:9",
+      "r5:1",
+      "orange",
+      []
+    ],
+    [
+      "r5:2",
+      "seg1:COM",
+      "orange",
+      []
+    ],
+    [
+      "rtc:VCC",
+      "uno:5V",
+      "red",
+      []
+    ],
+    [
+      "rtc:GND",
+      "uno:GND.2",
+      "black",
+      []
+    ],
+    [
+      "rtc:SDA",
+      "uno:A4",
+      "purple",
+      []
+    ],
+    [
+      "rtc:SCL",
+      "uno:A5",
+      "purple",
+      []
+    ],
+    [
+      "enc:CLK",
+      "uno:A0",
+      "green",
+      []
+    ],
+    [
+      "enc:DT",
+      "uno:A1",
+      "blue",
+      []
+    ],
+    [
+      "enc:SW",
+      "uno:A2",
+      "yellow",
+      []
+    ],
+    [
+      "enc:VCC",
+      "uno:5V",
+      "red",
+      []
+    ],
+    [
+      "enc:GND",
+      "uno:GND.3",
+      "black",
+      []
+    ],
+    [
+      "bz:2",
+      "uno:13",
+      "red",
+      []
+    ],
+    [
+      "bz:1",
+      "uno:GND.1",
+      "black",
+      []
+    ]
+  ]
+}
