@@ -123,3 +123,7 @@ The sketch's logic can be tested on a computer without the Arduino. `test/` comp
 cd test
 make
 ```
+
+## License
+
+MIT. See [LICENSE](LICENSE).
