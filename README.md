@@ -20,7 +20,7 @@ Turn the knob to cycle **Clock → Timer → Stopwatch → Alarm**. The small di
 | | Timer (inside) | Stopwatch (inside) | Alarm (inside) |
 |---|---|---|---|
 | **Turn** | set the time; once running, steps back out | steps back out | set the alarm time (5 min steps, fast spin = 1 h); also turns it on |
-| **Press** | start / pause | start / stop | alarm on / off |
+| **Press** | start / pause | start / stop | alarm on / off (shows ` On` or ` OFF` for a second) |
 | **Hold 1 s** | started: reset · still setting: step out and keep the time | reset · at 00.00: step out | step out |
 
 **When the alarm goes off** (it rings until you press):
@@ -46,6 +46,7 @@ While snoozing, hold the knob on the clock screen to cancel the snooze.
 | Big digits flashing | paused / stopped |
 | `t` or `S` blinking | inside, not started yet |
 | ` OFF` with `L` | alarm is off |
+| Dot on the last digit while setting the alarm | alarm is on (no dot = off) |
 | Dot on the last clock digit | alarm on (steady) / snoozing (blinking) |
 
 ## Hardware

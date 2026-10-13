@@ -9,7 +9,7 @@ int fails = 0;
 std::string ch(byte b){ byte s=b&0x7F; const char* c="?";
   const byte codes[]={0x3F,0x06,0x5B,0x4F,0x66,0x6D,0x7D,0x07,0x7F,0x6F}; const char* d[]={"0","1","2","3","4","5","6","7","8","9"};
   for(int i=0;i<10;i++) if(s==codes[i]) c=d[i];
-  if(s==0x77)c="A"; if(s==0x73)c="P"; if(s==0x78)c="t"; if(s==0)c=" "; if(s==0x6D)c="S"; if(s==0x38)c="L"; if(s==0x71)c="F";
+  if(s==0x77)c="A"; if(s==0x73)c="P"; if(s==0x78)c="t"; if(s==0)c=" "; if(s==0x6D)c="S"; if(s==0x38)c="L"; if(s==0x71)c="F"; if(s==0x54)c="n";
   return std::string(c) + ((b&0x80)?".":""); }
 std::string show(){ std::string r; for(int i=0;i<4;i++) r+=ch(displayBuffer[i]); return r+" | "+ch(displayBuffer[4]); }
 void run(unsigned long ms){ for(unsigned long t=0;t<ms;t++){ fake_ms++; loop(); } }
@@ -114,9 +114,9 @@ int main(){
   ok("(back on the clock)", screen==CLOCK_SCREEN && !inside, st());
   ccw(); ok("alarm screen (outside): ' OFF | L'", screen==ALARM_SCREEN && show()==" 0FF | L", st());
   press(); ok("press -> inside, shows 07.00 AM", inside && alarmMinuteOfDay==7*60 && count([]{return show().substr(0,2)=="07";})>=5 && displayBuffer[4]==0x77, st());
-  ok("inside, off: time flashes", count([]{return show().substr(0,4)=="    ";})>=5);
+  ok("inside, off: time steady (no flashing), no on-dot", count([]{return show().substr(0,4)=="    ";})==0 && count([]{return (displayBuffer[3]&0x80)!=0;})==0);
   cw(); ok("turn: 7:05 and it turns on", alarmMinuteOfDay==7*60+5 && alarmEnabled, st());
-  ok("on: time steady (no flashing)", count([]{return show().substr(0,4)=="    ";})==0);
+  ok("on: time steady, dot on the last digit", count([]{return show().substr(0,4)=="    ";})==0 && count([]{return (displayBuffer[3]&0x80)!=0;})==20);
   ok("saved to RTC memory", fake_nvram[0]==0xA1 && fake_nvram[1]==7 && fake_nvram[2]==5 && fake_nvram[3]==1);
   ccw(); ccw(); ok("turn back x2 -> 6:55", alarmMinuteOfDay==6*60+55, st());
   cw(); run(200); for(int i=0;i<3;i++) cw(20);
@@ -124,8 +124,11 @@ int main(){
   alarmMinuteOfDay = 0; run(200); ccw(); run(60);
   ok("12:00 AM back one click wraps to 11:55 PM", alarmMinuteOfDay==23*60+55 && displayBuffer[4]==0x73 && show().substr(0,2)=="11", st());
   alarmMinuteOfDay = 12*60; run(60); ok("noon shows 12.00 P", show().substr(0,2)=="12" && displayBuffer[4]==0x73, st());
-  press(); ok("press -> off", !alarmEnabled && fake_nvram[3]==0, st());
-  press(); ok("press -> on again", alarmEnabled && fake_nvram[3]==1, st());
+  press(); ok("press -> off, shows ' OFF'", !alarmEnabled && fake_nvram[3]==0 && show()==" 0FF | L", st());
+  run(1000); ok("...then back to the time, no dot", show().substr(0,2)=="12" && (displayBuffer[3]&0x80)==0, st());
+  press(); ok("press -> on again, shows ' On'", alarmEnabled && fake_nvram[3]==1 && show()==" 0n  | L", st());
+  cw(); ok("turning skips the message straight to the time", show().substr(0,2)=="12", st());
+  ccw(); run(1000);
   alarmMinuteOfDay = 7*60; saveAlarm();
   hold(); ok("hold -> steps out, shows time with L", !inside && screen==ALARM_SCREEN && displayBuffer[4]==0x38 && show().substr(0,2)=="07", st());
   press(); run(10500); ok("left inside the alarm screen: back to clock after 10 s", screen==CLOCK_SCREEN && !inside, st());

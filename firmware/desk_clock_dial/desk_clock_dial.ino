@@ -28,8 +28,10 @@
   Inside the ALARM:
     Turn            set the alarm time, 5 min a click (spin fast: 1 hour).
                     Setting a time also turns the alarm on.
-    Press           alarm on / off  (off = the time flashes)
+    Press           alarm on / off: shows " On" or " OFF" for a second
     Hold 1 second   step back out
+    While setting, the time stays steady. A dot on the last digit means the
+    alarm is on (same dot as on the clock); no dot means off.
     The small digit shows A/P for the alarm time. The alarm time is saved in
     the RTC's battery-backed memory, so unplugging the clock doesn't lose it.
 
@@ -116,6 +118,7 @@ const byte SEG_S     = 0x6D; // "S" for stopwatch
 const byte SEG_L     = 0x38; // "L" for alarm
 const byte SEG_O     = 0x3F; // "O" (for OFF)
 const byte SEG_F     = 0x71; // "F" (for OFF)
+const byte SEG_N     = 0x54; // "n" (for On)
 const byte DOT       = 0x80;
 
 byte displayBuffer[5];
@@ -170,6 +173,8 @@ unsigned long snoozeStart = 0;
 bool alarmPressActive = false;        // the press that stopped the ringing is still held
 int lastClockMinute = -1;             // last minute-of-day read from the RTC
 unsigned long lastAlarmCheck = 0;
+unsigned long alarmStatusUntil = 0;   // show " On" / " OFF" after a press until this time
+const unsigned long STATUS_MS = 1000UL;
 
 // Where the alarm is saved in the DS1307's battery-backed memory
 const uint8_t NVRAM_MAGIC = 0xA1;     // "this memory holds a saved alarm"
@@ -277,6 +282,14 @@ void showClock() {
 }
 
 void showAlarm() {
+  if (inside && (long)(alarmStatusUntil - millis()) > 0) { // just pressed: say " On" / " OFF"
+    displayBuffer[0] = SEG_BLANK;
+    displayBuffer[1] = SEG_O;
+    displayBuffer[2] = alarmEnabled ? SEG_N : SEG_F;
+    displayBuffer[3] = alarmEnabled ? SEG_BLANK : SEG_F;
+    displayBuffer[4] = SEG_L;
+    return;
+  }
   if (!inside && !alarmEnabled) {                   // outside and off: " OFF"
     displayBuffer[0] = SEG_BLANK;
     displayBuffer[1] = SEG_O;
@@ -297,9 +310,7 @@ void showAlarm() {
     displayBuffer[4] = SEG_L;                        // outside: just say which screen this is
   } else {
     displayBuffer[4] = (hour24 >= 12) ? SEG_P : SEG_A; // inside: AM/PM of the alarm time
-    if (!alarmEnabled && blinkPhase(400)) {          // off: flash, like a paused timer
-      for (int i = 0; i < 4; i++) displayBuffer[i] = SEG_BLANK;
-    }
+    if (alarmEnabled) displayBuffer[3] |= DOT;       // on: same dot as on the clock (steady, no flashing)
   }
 }
 
@@ -551,6 +562,7 @@ void handleInput() {
       if (screen == TIMER_SCREEN && !timerRunning) {
         stepTimer(clicks, fast);               // setting the timer
       } else if (screen == ALARM_SCREEN) {
+        alarmStatusUntil = now;                // turning: back to the time right away
         stepAlarm(clicks, fast);               // setting the alarm
       } else {
         stepOut(now, true);                    // running timer or stopwatch: step back out
@@ -615,6 +627,7 @@ void handleInput() {
     } else if (screen == ALARM_SCREEN) {
       alarmEnabled = !alarmEnabled;              // alarm on / off
       if (!alarmEnabled) alarmSnoozing = false;
+      alarmStatusUntil = now + STATUS_MS;        // say " On" / " OFF" for a second
       saveAlarm();
     }
   }
