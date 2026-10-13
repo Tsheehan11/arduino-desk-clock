@@ -1,5 +1,5 @@
 /*
-  Desk Clock + Timer + Stopwatch (rotary dial version)
+  Desk Clock + Alarm + Timer + Stopwatch (rotary dial version)
   Arduino UNO + DS1307 RTC + 74HC595 + rotary encoder + active buzzer
 
   Libraries needed (Library Manager):
@@ -19,10 +19,25 @@
      That's the Arduino blinking pin 13 on startup; it's normal.)
 
   === HOW TO USE ===
-  TURN the knob to pick a screen:   Clock -> Timer -> Stopwatch -> Clock ...
+  TURN the knob to pick a screen:   Clock -> Timer -> Stopwatch -> Alarm -> Clock ...
     (turning the other way goes backwards)
-    The small digit shows where you are: A/P = clock, t = timer, S = stopwatch.
-  PRESS on the Timer or Stopwatch screen to go INTO it.
+    The small digit shows where you are: A/P = clock, t = timer, S = stopwatch,
+    L = alarm.
+  PRESS on the Timer, Stopwatch or Alarm screen to go INTO it.
+
+  Inside the ALARM:
+    Turn            set the alarm time, 5 min a click (spin fast: 1 hour).
+                    Setting a time also turns the alarm on.
+    Press           alarm on / off  (off = the time flashes)
+    Hold 1 second   step back out
+    The small digit shows A/P for the alarm time. The alarm time is saved in
+    the RTC's battery-backed memory, so unplugging the clock doesn't lose it.
+
+  When the ALARM goes off, it beeps and flashes the clock until you press:
+    Press           snooze 9 minutes
+    Hold 1 second   turn it off until tomorrow
+    (Turning the knob does NOT stop it, so bumping the knob won't either.)
+    While snoozing, hold the knob on the clock screen to cancel the snooze.
 
   Inside the TIMER:
     Turn            set the time (only while it isn't running)
@@ -41,15 +56,20 @@
     Hold 1 second   reset to 00.00  (hold again at 00.00 to step back out)
     Turn            step back out (it keeps running)
 
-  When the timer finishes, it beeps and flashes; any press or turn silences it.
-  Just peeking at the Timer/Stopwatch screen (not pressed in)? It goes back to
-  the clock after 5 seconds of not touching the knob, even if it's running.
-  Pressed in, it stays put, unless it's sitting empty at 00.00 (then 10 s).
+  When the timer finishes, it beeps and flashes for up to 30 seconds; any press
+  or turn silences it.
+  Just peeking at a screen (not pressed in)? It goes back to the clock after
+  5 seconds of not touching the knob, even if something is running.
+  Pressed in, it stays put, unless it's sitting empty at 00.00 or you're on
+  the alarm screen (then 10 s).
 
   === WHAT THE DISPLAY SHOWS ===
   Clock:       HH.MM, small digit A/P. A dot on the A/P means the timer or
                stopwatch is going in the background (blinking = running,
                steady = paused).
+               A dot on the last big digit means the alarm is on
+               (steady = set, blinking = snoozing).
+  Alarm, from the outside: the alarm time, small digit "L" (" OFF" if it's off).
   Timer / stopwatch, from the outside: live time, small digit "t" or "S".
   Inside, before starting: the "t" / "S" blinks.
   Inside, counting:
@@ -93,6 +113,9 @@ const byte SEG_A     = 0x77; // "A" for AM
 const byte SEG_P     = 0x73; // "P" for PM
 const byte SEG_T     = 0x78; // "t" for timer
 const byte SEG_S     = 0x6D; // "S" for stopwatch
+const byte SEG_L     = 0x38; // "L" for alarm
+const byte SEG_O     = 0x3F; // "O" (for OFF)
+const byte SEG_F     = 0x71; // "F" (for OFF)
 const byte DOT       = 0x80;
 
 byte displayBuffer[5];
@@ -101,14 +124,14 @@ unsigned long lastMuxStep = 0;
 int muxIndex = 0;
 
 // ---- Screens ----
-enum Screen { CLOCK_SCREEN, TIMER_SCREEN, STOPWATCH_SCREEN };
-const int NUM_SCREENS = 3;
+enum Screen { CLOCK_SCREEN, TIMER_SCREEN, STOPWATCH_SCREEN, ALARM_SCREEN };
+const int NUM_SCREENS = 4;
 Screen screen = CLOCK_SCREEN;
-bool inside = false;        // true once you've pressed into the timer/stopwatch
+bool inside = false;        // true once you've pressed into a screen
 
 const unsigned long MINUTE_MS     = 60000UL;
 const unsigned long HOUR_MS       = 3600000UL;
-const unsigned long ALARM_MS      = 30000UL; // beep for 30 s max
+const unsigned long TIMER_BEEP_MS      = 30000UL; // beep for 30 s max
 const unsigned long HOLD_MS       = 1000UL;  // press-and-hold time
 const unsigned long PEEK_MS       = 5000UL;  // looking at timer/stopwatch without pressing in -> back to clock
 const unsigned long IDLE_MS       = 10000UL; // pressed in but left at 00.00 -> back to clock
@@ -123,8 +146,8 @@ unsigned long timerRemainingMs = 0;
 unsigned long timerLastTick = 0;
 bool timerRunning = false;
 bool timerPaused = false;   // paused partway through (makes it flash)
-bool alarmOn = false;
-unsigned long alarmStart = 0;
+bool timerBeeping = false;
+unsigned long timerBeepStart = 0;
 
 // ---- Stopwatch state ----
 const unsigned long MAX_STOPWATCH_MS = 99UL * HOUR_MS + 59UL * MINUTE_MS + 59999UL; // 99:59:59.9
@@ -132,6 +155,24 @@ unsigned long swElapsedMs = 0;
 unsigned long swLastTick = 0;
 bool swRunning = false;
 bool swPaused = false;      // stopped with time on it (makes it flash)
+
+// ---- Alarm state ----
+const int MINUTES_PER_DAY = 24 * 60;
+const int ALARM_STEP_MIN      = 5;    // one click while setting
+const int ALARM_FAST_STEP_MIN = 60;   // one click while spinning fast
+const unsigned long SNOOZE_MS = 9UL * MINUTE_MS;
+int alarmMinuteOfDay = 7 * 60;        // 7:00 AM until you set it
+bool alarmEnabled = false;
+bool alarmRinging = false;            // rings until you press; no time limit
+bool alarmSnoozing = false;
+unsigned long ringStart = 0;
+unsigned long snoozeStart = 0;
+bool alarmPressActive = false;        // the press that stopped the ringing is still held
+int lastClockMinute = -1;             // last minute-of-day read from the RTC
+unsigned long lastAlarmCheck = 0;
+
+// Where the alarm is saved in the DS1307's battery-backed memory
+const uint8_t NVRAM_MAGIC = 0xA1;     // "this memory holds a saved alarm"
 
 // ---- Debounced knob button ----
 // (Defined up here, before any functions, so the Arduino IDE can see it
@@ -224,6 +265,42 @@ void showClock() {
   if (timerRunning || swRunning) bgDot = !blinkPhase(500);
   else bgDot = (timerRemainingMs > 0) || (swElapsedMs > 0);
   displayBuffer[4] = (isPM ? SEG_P : SEG_A) | (bgDot ? DOT : 0);
+
+  // Alarm on? Dot on the last big digit: steady = set, blinking = snoozing.
+  bool alarmDot = alarmSnoozing ? !blinkPhase(500) : alarmEnabled;
+  if (alarmDot) displayBuffer[3] |= DOT;
+
+  // Alarm going off: flash the big digits
+  if (alarmRinging && blinkPhase(250)) {
+    for (int i = 0; i < 4; i++) displayBuffer[i] = SEG_BLANK;
+  }
+}
+
+void showAlarm() {
+  if (!inside && !alarmEnabled) {                   // outside and off: " OFF"
+    displayBuffer[0] = SEG_BLANK;
+    displayBuffer[1] = SEG_O;
+    displayBuffer[2] = SEG_F;
+    displayBuffer[3] = SEG_F;
+    displayBuffer[4] = SEG_L;
+    return;
+  }
+  int hour24 = alarmMinuteOfDay / 60;
+  int minute = alarmMinuteOfDay % 60;
+  int hour = hour24 % 12;
+  if (hour == 0) hour = 12;
+  displayBuffer[0] = digitCode[hour / 10];
+  displayBuffer[1] = digitCode[hour % 10] | (blinkPhase(500) ? 0 : DOT); // blinking dot = hours.minutes
+  displayBuffer[2] = digitCode[minute / 10];
+  displayBuffer[3] = digitCode[minute % 10];
+  if (!inside) {
+    displayBuffer[4] = SEG_L;                        // outside: just say which screen this is
+  } else {
+    displayBuffer[4] = (hour24 >= 12) ? SEG_P : SEG_A; // inside: AM/PM of the alarm time
+    if (!alarmEnabled && blinkPhase(400)) {          // off: flash, like a paused timer
+      for (int i = 0; i < 4; i++) displayBuffer[i] = SEG_BLANK;
+    }
+  }
 }
 
 // Ring on the small digit: the 6 outer segments are 10 seconds each.
@@ -283,7 +360,7 @@ void showTime(unsigned long ms, byte letter, bool counting, bool paused, bool fi
 }
 
 void showTimer() {
-  if (alarmOn && blinkPhase(250)) {                  // alarm: flash everything
+  if (timerBeeping && blinkPhase(250)) {                  // alarm: flash everything
     for (int i = 0; i < 4; i++) displayBuffer[i] = SEG_BLANK;
     displayBuffer[4] = SEG_T;
     return;
@@ -330,22 +407,86 @@ void updateTimer() {
   if (elapsed >= timerRemainingMs) {
     timerRemainingMs = 0;
     timerRunning = false;
-    alarmOn = true;
-    alarmStart = now;
-    screen = TIMER_SCREEN;   // pop up the timer, wherever you were
-    inside = false;
-    lastInputMs = now;
+    timerBeeping = true;
+    timerBeepStart = now;
+    if (!alarmRinging) {     // (the alarm going off keeps the screen)
+      screen = TIMER_SCREEN; // pop up the timer, wherever you were
+      inside = false;
+      lastInputMs = now;
+    }
   } else {
     timerRemainingMs -= elapsed;
   }
 }
 
 void updateBuzzer() {
-  if (alarmOn && millis() - alarmStart >= ALARM_MS) {
-    alarmOn = false; // give up after 30 s
+  if (timerBeeping && millis() - timerBeepStart >= TIMER_BEEP_MS) {
+    timerBeeping = false; // the timer gives up after 30 s (the alarm never does)
   }
-  bool beep = alarmOn && ((millis() - alarmStart) / 200) % 2 == 0; // 200 ms on/off
+  bool beep = timerBeeping && ((millis() - timerBeepStart) / 200) % 2 == 0; // timer: 200 ms on/off
+  if (alarmRinging) {
+    // Alarm: beep-beep-beep, pause (sounds different from the timer)
+    unsigned long t = (millis() - ringStart) % 1000UL;
+    if (t < 500 && (t / 100) % 2 == 0) beep = true;
+  }
   digitalWrite(BUZZER_PIN, beep ? HIGH : LOW);
+}
+
+// ---- Alarm ----
+void saveAlarm() {        // DS1307 memory has no write limit, so saving every change is fine
+  rtc.writenvram(0, NVRAM_MAGIC);
+  rtc.writenvram(1, alarmMinuteOfDay / 60);
+  rtc.writenvram(2, alarmMinuteOfDay % 60);
+  rtc.writenvram(3, alarmEnabled ? 1 : 0);
+}
+
+void loadAlarm() {
+  if (rtc.readnvram(0) != NVRAM_MAGIC) return;      // nothing saved yet: keep 7:00 AM, off
+  uint8_t h = rtc.readnvram(1);
+  uint8_t m = rtc.readnvram(2);
+  if (h >= 24 || m >= 60) return;
+  alarmMinuteOfDay = h * 60 + m;
+  alarmEnabled = rtc.readnvram(3) == 1;
+}
+
+// Same idea as the timer: every click lands on a round number, wrapping past midnight.
+void stepAlarm(int direction, bool fast) {
+  int step = fast ? ALARM_FAST_STEP_MIN : ALARM_STEP_MIN;
+  int t = alarmMinuteOfDay;
+  if (direction > 0) t = (t / step + 1) * step;           // up to the next whole step
+  else               t = ((t + step - 1) / step - 1) * step; // down to the previous one
+  alarmMinuteOfDay = (t + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+  alarmEnabled = true;     // setting a time means you want it on
+  saveAlarm();
+}
+
+void startRinging(unsigned long now) {
+  alarmRinging = true;
+  alarmSnoozing = false;
+  ringStart = now;
+  screen = CLOCK_SCREEN;   // show the clock, wherever you were
+  inside = false;
+  lastInputMs = now;
+}
+
+void updateAlarm() {
+  unsigned long now = millis();
+
+  // Snooze over: ring again
+  if (alarmSnoozing && now - snoozeStart >= SNOOZE_MS) startRinging(now);
+
+  // Check the RTC twice a second. Ring when the clock ROLLS OVER into the alarm
+  // minute, so it doesn't ring right away if you set it for the current minute
+  // (or if the clock powers up during that minute).
+  if (now - lastAlarmCheck < 500) return;
+  lastAlarmCheck = now;
+  DateTime t = rtc.now();
+  int minuteOfDay = t.hour() * 60 + t.minute();
+  if (lastClockMinute >= 0 && minuteOfDay != lastClockMinute &&
+      minuteOfDay == alarmMinuteOfDay && alarmEnabled && !alarmRinging) {
+    startRinging(now);
+  }
+  lastClockMinute = minuteOfDay;
 }
 
 // ---- Stopwatch ----
@@ -376,9 +517,27 @@ void handleInput() {
 
   if (clicks != 0 || knobBtn.wentDown) lastInputMs = now;
 
-  // Any press or turn while the alarm is going just silences it.
-  if (alarmOn && (clicks != 0 || knobBtn.wentDown)) {
-    alarmOn = false;
+  // ---- Alarm ringing: only a press stops it (turning is ignored) ----
+  if (alarmRinging && knobBtn.wentDown) {
+    alarmRinging = false;          // quiet as soon as you press...
+    alarmSnoozing = true;          // ...and snooze, unless you keep holding
+    snoozeStart = now;
+    alarmPressActive = true;
+    holdHandled = false;
+  }
+  if (alarmPressActive) {
+    if (knobBtn.stable == LOW && !holdHandled && now - knobBtn.downSince >= HOLD_MS) {
+      alarmSnoozing = false;       // held: off until tomorrow
+      holdHandled = true;
+    }
+    if (knobBtn.wentUp) alarmPressActive = false;
+    return;                        // this press does nothing else
+  }
+  if (alarmRinging) return;        // turning while it rings does nothing
+
+  // Any press or turn while the timer is beeping just silences it.
+  if (timerBeeping && (clicks != 0 || knobBtn.wentDown)) {
+    timerBeeping = false;
     holdHandled = true; // ignore the rest of this press
     return;
   }
@@ -391,11 +550,13 @@ void handleInput() {
     if (inside) {
       if (screen == TIMER_SCREEN && !timerRunning) {
         stepTimer(clicks, fast);               // setting the timer
+      } else if (screen == ALARM_SCREEN) {
+        stepAlarm(clicks, fast);               // setting the alarm
       } else {
         stepOut(now, true);                    // running timer or stopwatch: step back out
       }
     } else if (now - lastExitMs >= EXIT_LOCK_MS) {
-      // Outside: cycle Clock -> Timer -> Stopwatch (backwards if turning the other way)
+      // Outside: cycle Clock -> Timer -> Stopwatch -> Alarm (backwards if turning the other way)
       screen = (Screen)((screen + NUM_SCREENS + clicks) % NUM_SCREENS);
     }
   }
@@ -422,13 +583,17 @@ void handleInput() {
       } else {
         stepOut(now, false);
       }
+    } else if (inside && screen == ALARM_SCREEN) {
+      stepOut(now, false);                       // done setting the alarm
+    } else if (screen == CLOCK_SCREEN && alarmSnoozing) {
+      alarmSnoozing = false;                     // up already: cancel the snooze
     }
   }
 
   // ---- Short press (let go before the hold kicked in) ----
   if (knobBtn.wentUp && !holdHandled) {
     if (!inside) {
-      if (screen != CLOCK_SCREEN) inside = true;   // go into the timer / stopwatch
+      if (screen != CLOCK_SCREEN) inside = true;   // go into the timer / stopwatch / alarm
     } else if (screen == TIMER_SCREEN) {
       if (timerRunning) {
         timerRunning = false;                    // pause
@@ -447,11 +612,15 @@ void handleInput() {
         swPaused = false;
         swLastTick = now;
       }
+    } else if (screen == ALARM_SCREEN) {
+      alarmEnabled = !alarmEnabled;              // alarm on / off
+      if (!alarmEnabled) alarmSnoozing = false;
+      saveAlarm();
     }
   }
 
   // ---- Going back to the clock on its own ----
-  if (!alarmOn && screen != CLOCK_SCREEN) {
+  if (!timerBeeping && screen != CLOCK_SCREEN) {
     unsigned long idle = now - lastInputMs;
     if (!inside) {
       // Just peeking (never pressed in): back to the clock after a few seconds
@@ -460,7 +629,7 @@ void handleInput() {
       // Pressed in but left empty at 00.00: back to the clock too
       bool emptyTimer = screen == TIMER_SCREEN && !timerRunning && timerRemainingMs == 0;
       bool emptySw    = screen == STOPWATCH_SCREEN && !swRunning && swElapsedMs == 0;
-      if (emptyTimer || emptySw) {
+      if (emptyTimer || emptySw || screen == ALARM_SCREEN) {
         screen = CLOCK_SCREEN;
         inside = false;
       }
@@ -496,6 +665,7 @@ void setup() {
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
 
+  loadAlarm();
   showClock();
 }
 
@@ -505,20 +675,22 @@ void loop() {
   handleInput();
   updateTimer();
   updateStopwatch();
+  updateAlarm();
   updateBuzzer();
 
-  // Refresh what's on the display (timer/stopwatch need faster updates than
-  // the clock). Also refresh right away whenever the screen changes.
+  // Refresh what's on the display (timer/stopwatch and flashing need faster
+  // updates than the clock). Also refresh right away whenever the screen changes.
   static Screen shownScreen = CLOCK_SCREEN;
   static bool shownInside = false;
-  unsigned long refreshMs = (screen == CLOCK_SCREEN) ? 250 : 50;
+  unsigned long refreshMs = (screen == CLOCK_SCREEN && !alarmRinging) ? 250 : 50;
   if (screen != shownScreen || inside != shownInside || now - lastDisplayUpdate >= refreshMs) {
     shownScreen = screen;
     shownInside = inside;
     lastDisplayUpdate = now;
     if (screen == CLOCK_SCREEN) showClock();
     else if (screen == TIMER_SCREEN) showTimer();
-    else showStopwatch();
+    else if (screen == STOPWATCH_SCREEN) showStopwatch();
+    else showAlarm();
   }
 
   // Multiplex: light one digit at a time, fast enough that it looks solid

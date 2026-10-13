@@ -1,7 +1,11 @@
 #pragma once
 #include <cstdint>
 extern unsigned long fake_ms;
+long rtc_offset_s = 0;            // tests can jump the clock forward
+uint8_t fake_nvram[56];           // DS1307 battery-backed memory
 class DateTime { public: uint32_t s; DateTime(uint32_t x=0):s(x){} DateTime(const char*, const char*):s(0){}
   int hour() const { return (s/3600)%24; } int minute() const { return (s/60)%60; } int second() const { return s%60; } };
 class RTC_DS1307 { public: bool begin(){return true;} bool isrunning(){return true;} void adjust(const DateTime&){}
-  DateTime now(){ return DateTime(15*60 + fake_ms/1000); } };  // starts at 00:15:00
+  DateTime now(){ return DateTime(15*60 + rtc_offset_s + fake_ms/1000); }   // starts at 00:15:00
+  uint8_t readnvram(uint8_t a){ return fake_nvram[a]; }
+  void writenvram(uint8_t a, uint8_t d){ fake_nvram[a] = d; } };

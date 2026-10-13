@@ -1,30 +1,41 @@
 # Arduino Desk Clock
 
-A desk clock with a countdown timer and stopwatch, built on an Arduino Uno from starter-kit parts. A 4-digit 7-segment display shows the time, a 1-digit display shows AM/PM (or extra timer detail), and everything is controlled with a single rotary knob.
+A desk clock with an alarm, countdown timer and stopwatch, built on an Arduino Uno from starter-kit parts. A 4-digit 7-segment display shows the time, a 1-digit display shows AM/PM (or extra timer detail), and everything is controlled with a single rotary knob.
 
 ## Features
 
 - **Clock**: 12-hour time kept by a DS1307 real-time clock (keeps time through power loss with its coin cell), blinking separator, AM/PM digit.
+- **Alarm**: set to the nearest 5 minutes and saved in the RTC's battery-backed memory, so it survives unplugging. It rings (beep-beep-beep) and flashes the clock until you press the knob: press to snooze for 9 minutes, hold to turn it off until tomorrow. Turning the knob doesn't stop it.
 - **Countdown timer**: set with the knob from 5 seconds up to 99 hours 55 minutes. Step size scales with the time (5 s steps under a minute, up to 5 min steps over an hour), and every value lands on a round number. A fast spin takes bigger jumps.
 - **Stopwatch**: up to 99:59:59.
 - **Live detail on the small digit**: tenths of a second under an hour; over an hour, a 6-segment "ring" where each segment is 10 seconds (it empties for the timer and fills for the stopwatch).
-- **Alarm**: buzzer and flashing display when the timer ends, from any screen.
-- **Background indicator**: a dot on the clock's AM/PM digit blinks while the timer or stopwatch runs in the background.
+- **Timer done**: buzzer and flashing display when the timer ends, from any screen, for up to 30 seconds.
+- **Background indicators**: a dot on the clock's AM/PM digit blinks while the timer or stopwatch runs in the background; a dot on the last big digit shows the alarm is on (blinking while snoozed).
 - **One-knob interface**: turn to pick a screen, press to go in.
 
 ## Controls
 
-Turn the knob to cycle **Clock → Timer → Stopwatch**. The small digit shows where you are: `A`/`P` = clock, `t` = timer, `S` = stopwatch. Press on the Timer or Stopwatch screen to go into it.
+Turn the knob to cycle **Clock → Timer → Stopwatch → Alarm**. The small digit shows where you are: `A`/`P` = clock, `t` = timer, `S` = stopwatch, `L` = alarm. Press on any screen but the clock to go into it.
 
-| | Timer (inside) | Stopwatch (inside) |
-|---|---|---|
-| **Turn** | set the time; once running, steps back out | steps back out |
-| **Press** | start / pause | start / stop |
-| **Hold 1 s** | started: reset · still setting: step out and keep the time | reset · at 00.00: step out |
+| | Timer (inside) | Stopwatch (inside) | Alarm (inside) |
+|---|---|---|---|
+| **Turn** | set the time; once running, steps back out | steps back out | set the alarm time (5 min steps, fast spin = 1 h); also turns it on |
+| **Press** | start / pause | start / stop | alarm on / off |
+| **Hold 1 s** | started: reset · still setting: step out and keep the time | reset · at 00.00: step out | step out |
+
+**When the alarm goes off** (it rings until you press):
+
+| | |
+|---|---|
+| **Press** | snooze 9 minutes |
+| **Hold 1 s** | off until tomorrow |
+| **Turn** | nothing, so bumping the knob won't stop it |
+
+While snoozing, hold the knob on the clock screen to cancel the snooze.
 
 - Stepping out never stops anything; the timer and stopwatch keep running.
-- Just peeking at the Timer/Stopwatch screen (not pressed in) returns to the clock after 5 seconds.
-- Any press or turn silences the alarm.
+- Just peeking at a screen (not pressed in) returns to the clock after 5 seconds.
+- Any press or turn silences the timer beeping.
 
 **Reading the display**
 
@@ -34,6 +45,8 @@ Turn the knob to cycle **Clock → Timer → Stopwatch**. The small digit shows 
 | Blinking middle dot | hours . minutes (same as the clock) |
 | Big digits flashing | paused / stopped |
 | `t` or `S` blinking | inside, not started yet |
+| ` OFF` with `L` | alarm is off |
+| Dot on the last clock digit | alarm on (steady) / snoozing (blinking) |
 
 ## Hardware
 
@@ -45,7 +58,7 @@ Turn the knob to cycle **Clock → Timer → Stopwatch**. The small digit shows 
 | 74HC595 shift register | drives the 8 shared segment lines |
 | DS1307 RTC module | timekeeping (I2C) |
 | Rotary encoder module (KY-040 style) | the knob |
-| Active buzzer | alarm |
+| Active buzzer | alarm and timer |
 | 5 × 220 Ω resistors | one per digit |
 | Breadboard + jumper wires | |
 
@@ -117,7 +130,7 @@ If turning the knob right goes the wrong way, flip `ENC_REVERSE` at the top of t
 
 ## Tests
 
-The sketch's logic can be tested on a computer without the Arduino. `test/` compiles the real sketch against a small fake Arduino (pins, `millis()`, RTC) and simulates turning and pressing the knob: screen navigation, step sizes, timer countdown and alarm, stopwatch, pause flashing, the ring and tenths display, and auto-return to the clock.
+The sketch's logic can be tested on a computer without the Arduino. `test/` compiles the real sketch against a small fake Arduino (pins, `millis()`, RTC) and simulates turning and pressing the knob: screen navigation, step sizes, timer countdown and beeping, stopwatch, pause flashing, the ring and tenths display, auto-return to the clock, and the alarm (setting it, ringing on time, ringing with no time limit, snooze, dismiss, and surviving a power cut). The fake RTC can jump the time forward, so a whole morning of alarms runs in under a second.
 
 ```sh
 cd test
