@@ -30,7 +30,7 @@ int main(){
   // --- browsing ---
   cw(); ok("turn -> timer screen (outside), shows 00.00 t", screen==TIMER_SCREEN && !inside && show()=="00.00 | t", st());
   cw(); ok("turn -> stopwatch screen, shows 00.00 S", screen==STOPWATCH_SCREEN && !inside && show()=="00.00 | S", st());
-  cw(); ok("turn -> alarm screen, shows OFF | L", screen==ALARM_SCREEN && !inside && show()==" 0FF | L", st());
+  cw(); ok("turn -> alarm screen, shows alarm time | L", screen==ALARM_SCREEN && !inside && show().substr(0,2)=="07" && displayBuffer[4]==0x38, st());
   cw(); ok("turn -> wraps to clock", screen==CLOCK_SCREEN, st());
   ccw(); ok("turn back -> alarm", screen==ALARM_SCREEN, st());
   ccw(); ok("turn back -> stopwatch", screen==STOPWATCH_SCREEN, st());
@@ -112,25 +112,24 @@ int main(){
   // --- alarm ---
   hold(); run(5500); timerRemainingMs = 0;                  // out of the timer, back to the clock
   ok("(back on the clock)", screen==CLOCK_SCREEN && !inside, st());
-  ccw(); ok("alarm screen (outside): ' OFF | L'", screen==ALARM_SCREEN && show()==" 0FF | L", st());
+  ccw(); ok("alarm screen (outside), off: shows the time, no dot (not ' OFF')", screen==ALARM_SCREEN && show().substr(0,2)=="07" && displayBuffer[4]==0x38 && count([]{return (displayBuffer[3]&0x80)!=0;},10)==0, st());
   press(); ok("press -> inside, shows 07.00 AM", inside && alarmMinuteOfDay==7*60 && count([]{return show().substr(0,2)=="07";})>=5 && displayBuffer[4]==0x77, st());
   ok("inside, off: time steady (no flashing), no on-dot", count([]{return show().substr(0,4)=="    ";})==0 && count([]{return (displayBuffer[3]&0x80)!=0;})==0);
-  cw(); ok("turn: 7:05 and it turns on", alarmMinuteOfDay==7*60+5 && alarmEnabled, st());
-  ok("on: time steady, dot on the last digit", count([]{return show().substr(0,4)=="    ";})==0 && count([]{return (displayBuffer[3]&0x80)!=0;})==20);
-  ok("saved to RTC memory", fake_nvram[0]==0xA1 && fake_nvram[1]==7 && fake_nvram[2]==5 && fake_nvram[3]==1);
+  cw(); ok("turn: 7:05 (still inside)", alarmMinuteOfDay==7*60+5 && inside, st());
+  ok("time steady while setting", count([]{return show().substr(0,4)=="    ";})==0);
   ccw(); ccw(); ok("turn back x2 -> 6:55", alarmMinuteOfDay==6*60+55, st());
   cw(); run(200); for(int i=0;i<3;i++) cw(20);
   ok("fast spin: 7:00 -> 7:05 (first click) -> 8:00 -> 9:00", alarmMinuteOfDay==9*60, std::to_string(alarmMinuteOfDay/60)+":"+std::to_string(alarmMinuteOfDay%60));
   alarmMinuteOfDay = 0; run(200); ccw(); run(60);
   ok("12:00 AM back one click wraps to 11:55 PM", alarmMinuteOfDay==23*60+55 && displayBuffer[4]==0x73 && show().substr(0,2)=="11", st());
-  alarmMinuteOfDay = 12*60; run(60); ok("noon shows 12.00 P", show().substr(0,2)=="12" && displayBuffer[4]==0x73, st());
-  press(); ok("press -> off, shows ' OFF'", !alarmEnabled && fake_nvram[3]==0 && show()==" 0FF | L", st());
-  run(1000); ok("...then back to the time, no dot", show().substr(0,2)=="12" && (displayBuffer[3]&0x80)==0, st());
-  press(); ok("press -> on again, shows ' On'", alarmEnabled && fake_nvram[3]==1 && show()==" 0n  | L", st());
-  cw(); ok("turning skips the message straight to the time", show().substr(0,2)=="12", st());
-  ccw(); run(1000);
+  alarmMinuteOfDay = 7*60+5; run(200);
+  press(); ok("press = done: alarm on, steps out, shows ' On'", alarmEnabled && !inside && screen==ALARM_SCREEN && show()==" 0n  | L", st());
+  ok("saved to RTC memory", fake_nvram[0]==0xA1 && fake_nvram[1]==7 && fake_nvram[2]==5 && fake_nvram[3]==1);
+  run(1000); ok("...then the time with the on-dot", show().substr(0,2)=="07" && count([]{return (displayBuffer[3]&0x80)!=0;},10)==10, st());
+  press(); hold(); ok("go in, hold = alarm off, steps out, shows ' OFF'", !alarmEnabled && !inside && fake_nvram[3]==0 && show()==" 0FF | L", st());
+  run(1000); ok("...then the time again, no dot", show().substr(0,2)=="07" && count([]{return (displayBuffer[3]&0x80)!=0;},10)==0, st());
+  press(); press(); ok("go in, press = back on without changing the time", alarmEnabled && alarmMinuteOfDay==7*60+5 && !inside, st());
   alarmMinuteOfDay = 7*60; saveAlarm();
-  hold(); ok("hold -> steps out, shows time with L", !inside && screen==ALARM_SCREEN && displayBuffer[4]==0x38 && show().substr(0,2)=="07", st());
   press(); run(10500); ok("left inside the alarm screen: back to clock after 10 s", screen==CLOCK_SCREEN && !inside, st());
   ok("clock: steady alarm dot on the last digit", count([]{return (displayBuffer[3]&0x80)!=0;})==20);
   // ringing
@@ -159,8 +158,8 @@ int main(){
   hold(); ok("hold on the clock while snoozing: cancels the snooze", !alarmSnoozing && !alarmRinging && screen==CLOCK_SCREEN, st());
   run(10UL*60000); ok("cancelled snooze stays quiet", !alarmRinging);
   setClock(3,6,59,58); run(3000); press();
-  ccw(); press(); press(); ok("turning the alarm off cancels a snooze", !alarmEnabled && !alarmSnoozing, st());
-  hold(); run(5500);
+  ccw(); press(); hold(); ok("turning the alarm off cancels a snooze", !alarmEnabled && !alarmSnoozing, st());
+  run(5500);
   setClock(4,6,59,58); run(3000); ok("alarm off: doesn't ring", !alarmRinging);
   ok("clock: no alarm dot when off", count([]{return (displayBuffer[3]&0x80)!=0;})==0);
   // timer finishing while the alarm rings keeps the clock up

@@ -26,12 +26,11 @@
   PRESS on the Timer, Stopwatch or Alarm screen to go INTO it.
 
   Inside the ALARM:
-    Turn            set the alarm time, 5 min a click (spin fast: 1 hour).
-                    Setting a time also turns the alarm on.
-    Press           alarm on / off: shows " On" or " OFF" for a second
-    Hold 1 second   step back out
-    While setting, the time stays steady. A dot on the last digit means the
-    alarm is on (same dot as on the clock); no dot means off.
+    Turn            set the alarm time, 5 min a click (spin fast: 1 hour)
+    Press           done: alarm ON, step back out (shows " On" for a second)
+    Hold 1 second   alarm OFF, step back out (shows " OFF" for a second)
+    The alarm screen always shows the alarm time. A dot on the last digit
+    means the alarm is on (same dot as on the clock); no dot means off.
     The small digit shows A/P for the alarm time. The alarm time is saved in
     the RTC's battery-backed memory, so unplugging the clock doesn't lose it.
 
@@ -71,7 +70,7 @@
                steady = paused).
                A dot on the last big digit means the alarm is on
                (steady = set, blinking = snoozing).
-  Alarm, from the outside: the alarm time, small digit "L" (" OFF" if it's off).
+  Alarm, from the outside: the alarm time, small digit "L", dot on the last digit if on.
   Timer / stopwatch, from the outside: live time, small digit "t" or "S".
   Inside, before starting: the "t" / "S" blinks.
   Inside, counting:
@@ -282,19 +281,11 @@ void showClock() {
 }
 
 void showAlarm() {
-  if (inside && (long)(alarmStatusUntil - millis()) > 0) { // just pressed: say " On" / " OFF"
+  if ((long)(alarmStatusUntil - millis()) > 0) {   // just pressed / held: say " On" / " OFF"
     displayBuffer[0] = SEG_BLANK;
     displayBuffer[1] = SEG_O;
     displayBuffer[2] = alarmEnabled ? SEG_N : SEG_F;
     displayBuffer[3] = alarmEnabled ? SEG_BLANK : SEG_F;
-    displayBuffer[4] = SEG_L;
-    return;
-  }
-  if (!inside && !alarmEnabled) {                   // outside and off: " OFF"
-    displayBuffer[0] = SEG_BLANK;
-    displayBuffer[1] = SEG_O;
-    displayBuffer[2] = SEG_F;
-    displayBuffer[3] = SEG_F;
     displayBuffer[4] = SEG_L;
     return;
   }
@@ -305,13 +296,9 @@ void showAlarm() {
   displayBuffer[0] = digitCode[hour / 10];
   displayBuffer[1] = digitCode[hour % 10] | (blinkPhase(500) ? 0 : DOT); // blinking dot = hours.minutes
   displayBuffer[2] = digitCode[minute / 10];
-  displayBuffer[3] = digitCode[minute % 10];
-  if (!inside) {
-    displayBuffer[4] = SEG_L;                        // outside: just say which screen this is
-  } else {
-    displayBuffer[4] = (hour24 >= 12) ? SEG_P : SEG_A; // inside: AM/PM of the alarm time
-    if (alarmEnabled) displayBuffer[3] |= DOT;       // on: same dot as on the clock (steady, no flashing)
-  }
+  displayBuffer[3] = digitCode[minute % 10] | (alarmEnabled ? DOT : 0); // on: same dot as on the clock
+  if (!inside) displayBuffer[4] = SEG_L;             // outside: just say which screen this is
+  else displayBuffer[4] = (hour24 >= 12) ? SEG_P : SEG_A; // inside: AM/PM of the alarm time
 }
 
 // Ring on the small digit: the 6 outer segments are 10 seconds each.
@@ -596,7 +583,11 @@ void handleInput() {
         stepOut(now, false);
       }
     } else if (inside && screen == ALARM_SCREEN) {
-      stepOut(now, false);                       // done setting the alarm
+      alarmEnabled = false;                      // hold: alarm off, step out
+      alarmSnoozing = false;
+      alarmStatusUntil = now + STATUS_MS;        // say " OFF" for a second
+      saveAlarm();
+      stepOut(now, false);
     } else if (screen == CLOCK_SCREEN && alarmSnoozing) {
       alarmSnoozing = false;                     // up already: cancel the snooze
     }
@@ -625,10 +616,10 @@ void handleInput() {
         swLastTick = now;
       }
     } else if (screen == ALARM_SCREEN) {
-      alarmEnabled = !alarmEnabled;              // alarm on / off
-      if (!alarmEnabled) alarmSnoozing = false;
-      alarmStatusUntil = now + STATUS_MS;        // say " On" / " OFF" for a second
+      alarmEnabled = true;                       // press: done, alarm on, step out
+      alarmStatusUntil = now + STATUS_MS;        // say " On" for a second
       saveAlarm();
+      stepOut(now, false);
     }
   }
 
