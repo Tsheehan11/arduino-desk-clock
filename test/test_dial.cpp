@@ -5,11 +5,12 @@
 #include <functional>
 #include "../firmware/desk_clock_dial/desk_clock_dial.ino"
 #include <string>
+#include <cstring>
 int fails = 0;
 std::string ch(byte b){ byte s=b&0x7F; const char* c="?";
   const byte codes[]={0x3F,0x06,0x5B,0x4F,0x66,0x6D,0x7D,0x07,0x7F,0x6F}; const char* d[]={"0","1","2","3","4","5","6","7","8","9"};
   for(int i=0;i<10;i++) if(s==codes[i]) c=d[i];
-  if(s==0x77)c="A"; if(s==0x73)c="P"; if(s==0x78)c="t"; if(s==0)c=" "; if(s==0x6D)c="S"; if(s==0x38)c="L"; if(s==0x71)c="F"; if(s==0x54)c="n";
+  if(s==0x77)c="A"; if(s==0x73)c="P"; if(s==0x78)c="t"; if(s==0)c=" "; if(s==0x6D)c="S"; if(s==0x38)c="L"; if(s==0x71)c="F"; if(s==0x54)c="n"; if(s==0x39)c="C"; if(s==0x50)c="r"; if(s==0x5E)c="d";
   return std::string(c) + ((b&0x80)?".":""); }
 std::string show(){ std::string r; for(int i=0;i<4;i++) r+=ch(displayBuffer[i]); return r+" | "+ch(displayBuffer[4]); }
 void run(unsigned long ms){ for(unsigned long t=0;t<ms;t++){ fake_ms++; loop(); } }
@@ -23,7 +24,7 @@ const char* scr(){ return screen==CLOCK_SCREEN?"clock":screen==TIMER_SCREEN?"tim
 std::string st(){ return std::string("[")+scr()+(inside?" inside":"")+" "+show()+"]"; }
 int count(std::function<bool()> f, int n=20, int step=100){ int c=0; for(int i=0;i<n;i++){ run(step); if(f()) c++; } return c; }
 void setClock(long day,int h,int m,int sec){ rtc_offset_s = day*86400L + h*3600L + m*60L + sec - 900L - (long)(fake_ms/1000); }
-int toggles(int ms){ int t=0,last=pinOut[13]; for(int i=0;i<ms;i++){ run(1); if(pinOut[13]!=last){t++; last=pinOut[13];} } return t; }
+int toggles(int ms){ int t=0,last=pinOut[A3]; for(int i=0;i<ms;i++){ run(1); if(pinOut[A3]!=last){t++; last=pinOut[A3];} } return t; }
 int main(){
   setup(); pinIn[A0]=pinIn[A1]=pinIn[A2]=HIGH; run(1000);
   ok("boot: clock", screen==CLOCK_SCREEN && !inside, st());
@@ -69,7 +70,7 @@ int main(){
   ccw(); press(); cw(); cw(); press(); ok("timer 0:10 started", timerRunning && timerRemainingMs<=10000, st());
   cw(); run(600); cw(); press(); press(); ok("browse to stopwatch, start it", swRunning && screen==STOPWATCH_SCREEN && inside, st());
   run(10000); ok("timer alarm pops up the timer screen", timerBeeping && screen==TIMER_SCREEN && !inside, st());
-  int t=0,last=pinOut[13]; for(int i=0;i<1500;i++){ run(1); if(pinOut[13]!=last){t++; last=pinOut[13];} } ok("buzzer beeping", t>=6);
+  int t=0,last=pinOut[A3]; for(int i=0;i<1500;i++){ run(1); if(pinOut[A3]!=last){t++; last=pinOut[A3];} } ok("buzzer beeping", t>=6);
   cw(); ok("turn silences without browsing away", !timerBeeping && screen==TIMER_SCREEN && swRunning, st());
   // --- hour views ---
   cw(); press(); swElapsedMs = 3600000UL + 25000; swPaused = true; run(60); ok("stopwatch 1:00:25 inside -> HH.MM + filling ring (3 lit)", count([]{return show().substr(0,5)=="01.00";},40)>=3 && displayBuffer[4]==0x07, st());
@@ -132,7 +133,7 @@ int main(){
   alarmMinuteOfDay = 7*60; saveAlarm();
   press(); run(10500); ok("left inside the alarm screen: back to clock after 10 s", screen==CLOCK_SCREEN && !inside, st());
   ok("clock: steady alarm dot on the last digit", count([]{return (displayBuffer[3]&0x80)!=0;})==20);
-  // ringing
+  // ringing (no card paired yet)
   DateTime n = rtc.now(); alarmMinuteOfDay = n.hour()*60 + n.minute(); run(3000);
   ok("set for the current minute: doesn't ring right away", !alarmRinging);
   alarmMinuteOfDay = 7*60; setClock(1,6,59,57); run(1500); ok("6:59:58: not yet", !alarmRinging);
@@ -141,37 +142,62 @@ int main(){
   ok("clock flashes while ringing", count([]{return show().substr(0,4)=="    ";})>=5);
   run(120000); ok("still ringing after 2 minutes (no time limit)", alarmRinging && toggles(1000)==6);
   cw(); cw(); ccw(); ok("turning does NOT stop it (or change screen)", alarmRinging && screen==CLOCK_SCREEN && !inside, st());
-  { pinIn[A2]=LOW; run(60); int t=toggles(400); pinIn[A2]=HIGH; run(100);
-    ok("press: quiet as soon as it's pressed", t==0 && pinOut[13]==LOW); }
-  ok("press = snooze (no screen change)", !alarmRinging && alarmSnoozing && screen==CLOCK_SCREEN && !inside, st());
-  ok("snoozing: buzzer quiet", toggles(2000)==0);
-  { int on = count([]{return (displayBuffer[3]&0x80)!=0;});
-    ok("snoozing: alarm dot blinks", on>=7 && on<=13, "(on "+std::to_string(on)+"/20)"); }
-  run(9UL*60000 - 6000); ok("snooze: quiet until 9 min", !alarmRinging && alarmSnoozing);
-  run(3000); ok("snooze over: rings again", alarmRinging, st());
-  { pinIn[A2]=LOW; run(400); int t=toggles(1000); pinIn[A2]=HIGH; run(100);
-    ok("hold: quiet the whole time", t==0); }
-  ok("hold = off until tomorrow (alarm stays set)", !alarmRinging && !alarmSnoozing && alarmEnabled, st());
-  run(10UL*60000); ok("no snooze ring after holding", !alarmRinging);
+  { int p0=fake_polls; run(1000); ok("ringing: checks the reader a few times a second", fake_polls-p0>=5 && fake_polls-p0<=8); }
+  press(); ok("no card paired: a press turns it off (no snooze)", !alarmRinging && alarmEnabled && screen==CLOCK_SCREEN && !inside, st());
+  ok("buzzer quiet after", toggles(2000)==0);
+  run(15UL*60000); ok("doesn't come back later (no snooze)", !alarmRinging);
   setClock(2,6,59,58); run(3000); ok("next day: rings again", alarmRinging);
-  press(); ok("press -> snooze", alarmSnoozing);
-  hold(); ok("hold on the clock while snoozing: cancels the snooze", !alarmSnoozing && !alarmRinging && screen==CLOCK_SCREEN, st());
-  run(10UL*60000); ok("cancelled snooze stays quiet", !alarmRinging);
-  setClock(3,6,59,58); run(3000); press();
-  ccw(); press(); hold(); ok("turning the alarm off cancels a snooze", !alarmEnabled && !alarmSnoozing, st());
-  run(5500);
+  hold(); ok("hold also turns it off, nothing else happens", !alarmRinging && screen==CLOCK_SCREEN && !inside, st());
+  ccw(); press(); hold(); run(5500); ok("(alarm switched off)", !alarmEnabled);
   setClock(4,6,59,58); run(3000); ok("alarm off: doesn't ring", !alarmRinging);
   ok("clock: no alarm dot when off", count([]{return (displayBuffer[3]&0x80)!=0;})==0);
   // timer finishing while the alarm rings keeps the clock up
   alarmEnabled = true; setClock(5,6,59,58); timerRemainingMs = 4000; timerRunning = true; timerLastTick = fake_ms;
   run(5000); ok("timer ends during the alarm: clock stays up, both beep", alarmRinging && timerBeeping && screen==CLOCK_SCREEN, st());
-  press(); ok("first press handles the alarm only", alarmSnoozing && !alarmRinging, st());
+  press(); ok("first press handles the alarm only", !alarmRinging && timerBeeping, st());
   press(); ok("next press silences the timer", !timerBeeping, st());
-  hold(); alarmSnoozing = false; run(5500);
+  run(5500);
   // power loss
   alarmMinuteOfDay = 6*60+30; alarmEnabled = true; saveAlarm();
   alarmMinuteOfDay = 0; alarmEnabled = false; loadAlarm();
   ok("unplugged: alarm time comes back from RTC memory", alarmMinuteOfDay==6*60+30 && alarmEnabled);
   fake_nvram[0] = 0; alarmMinuteOfDay = 7*60; alarmEnabled = false; loadAlarm();
   ok("blank RTC memory: defaults to 7:00 AM, off", alarmMinuteOfDay==7*60 && !alarmEnabled);
+  // --- RFID card ---
+  const byte cardA[4]={0xDE,0xAD,0xBE,0xEF}, cardB[4]={1,2,3,4}, card7[7]={1,2,3,4,5,6,7};
+  run(6000);
+  { int p0=fake_polls; run(5000); ok("reader left alone when not needed", fake_polls==p0, st()); }
+  tapCard(cardA,4); run(500); fake_tap=false; ok("tap on the clock screen does nothing", cardUidSize==0);
+  ccw(); press(); ok("(inside the alarm screen)", inside && screen==ALARM_SCREEN, st());
+  tapCard(cardA,4); run(100);
+  ok("tap on the alarm screen: paired, shows 'CArd', beeps", cardUidSize==4 && show()=="CArd | L" && pinOut[A3]==HIGH, st());
+  run(200); ok("beep is short", pinOut[A3]==LOW);
+  ok("card saved in RTC memory", fake_nvram[0]==0xA1 && fake_nvram[4]==4 && fake_nvram[5]==0xDE && fake_nvram[8]==0xEF);
+  run(1000); ok("then back to the alarm time", show().substr(0,2)=="07", st());
+  press(); ok("press: alarm on", alarmEnabled && !inside, st());
+  cardUidSize = 0; memset(cardUid, 0, 10); loadAlarm();
+  ok("unplugged: card comes back from RTC memory", cardUidSize==4 && cardUid[0]==0xDE && cardUid[3]==0xEF);
+  run(6000);
+  setClock(10,6,59,58); run(3000); ok("rings", alarmRinging);
+  press(); ok("card paired: press does NOT stop it, shows 'CArd'", alarmRinging && show()=="CArd | L", st());
+  ok("...still beeping", toggles(1000)>=4);
+  hold(); ok("hold doesn't stop it either", alarmRinging, st());
+  cw(); cw(); ok("turning doesn't either", alarmRinging && screen==CLOCK_SCREEN, st());
+  tapCard(cardB,4); run(300); ok("wrong card: keeps ringing", alarmRinging);
+  run(5UL*60000); ok("still ringing 5 minutes later", alarmRinging && toggles(1000)==6);
+  tapCard(cardA,4); run(300); ok("right card: off, shows ' OFF'", !alarmRinging && show()==" 0FF | L", st());
+  ok("buzzer quiet", toggles(2000)==0);
+  ok("alarm stays set for tomorrow", alarmEnabled && count([]{return (displayBuffer[3]&0x80)!=0;},5)==5);
+  run(20UL*60000); ok("stays quiet", !alarmRinging);
+  setClock(11,6,59,58); run(3000); ok("next day: rings again", alarmRinging);
+  tapCard(cardA,4); run(300); ok("card turns it off", !alarmRinging);
+  run(2000); ccw(); press(); tapCard(card7,7); run(100);
+  ok("pairing a different (7-byte) card replaces the old one", cardUidSize==7 && fake_nvram[4]==7 && cardUid[6]==7);
+  press(); run(6000);
+  setClock(12,6,59,58); run(3000); tapCard(cardA,4); run(300); ok("old card no longer works", alarmRinging);
+  tapCard(card7,7); run(300); ok("new card works", !alarmRinging);
+  // no reader wired up
+  fake_reader_present = false; setup(); run(6000);
+  setClock(13,6,59,58); run(3000);
+  { int p0=fake_polls; run(2000); ok("no reader found: never talks to it", alarmRinging && fake_polls==p0); }
   printf("\n%d failure(s)\n", fails); return fails; }

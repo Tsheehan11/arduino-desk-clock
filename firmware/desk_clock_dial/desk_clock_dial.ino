@@ -1,9 +1,11 @@
 /*
   Desk Clock + Alarm + Timer + Stopwatch (rotary dial version)
   Arduino UNO + DS1307 RTC + 74HC595 + rotary encoder + active buzzer
+  + RC522 RFID reader (tap a card to turn the alarm off)
 
   Libraries needed (Library Manager):
     - RTClib (by Adafruit)
+    - MFRC522 (by GithubCommunity)
 
   === WIRING ===
   Everything from desk_clock.ino stays exactly the same:
@@ -14,9 +16,12 @@
     RTC:      VCC -> 5V, GND -> GND, SDA -> A4, SCL -> A5
   Rotary encoder (female-to-male wires):
     CLK -> A0, DT -> A1, SW -> A2, + -> 5V (+ rail), GND -> GND (- rail)
-  Active buzzer: + leg -> pin 13, - leg -> GND
-    (It may chirp for a moment when the Arduino starts up or you upload.
-     That's the Arduino blinking pin 13 on startup; it's normal.)
+  Active buzzer: + leg -> A3, - leg -> GND   (it moved here from pin 13)
+  RC522 RFID reader (female-to-male wires). NOT the kit lesson's wiring:
+  pin 9 is already a display digit, so RST goes to 3.3V instead.
+    SDA -> D10, SCK -> D13, MOSI -> D11, MISO -> D12,
+    RST -> 3.3V, 3.3V -> 3.3V, GND -> GND, IRQ -> not connected
+    Power it from 3.3V, not 5V.
 
   === HOW TO USE ===
   TURN the knob to pick a screen:   Clock -> Timer -> Stopwatch -> Alarm -> Clock ...
@@ -34,11 +39,15 @@
     The small digit shows A/P for the alarm time. The alarm time is saved in
     the RTC's battery-backed memory, so unplugging the clock doesn't lose it.
 
-  When the ALARM goes off, it beeps and flashes the clock until you press:
-    Press           snooze 9 minutes
-    Hold 1 second   turn it off until tomorrow
-    (Turning the knob does NOT stop it, so bumping the knob won't either.)
-    While snoozing, hold the knob on the clock screen to cancel the snooze.
+  Pairing your card: go into the Alarm screen and tap the card on the reader.
+    The display says "CArd" and it beeps. That card is saved in the RTC's
+    memory; tap a different card the same way to replace it.
+
+  When the ALARM goes off, it beeps and flashes the clock. No snooze.
+    Tap your card   turn it off until tomorrow
+    Press / turn    nothing (pressing just shows "CArd" to remind you)
+    Unplugging the clock also stops it.
+    No card paired yet? Then a press turns it off, so you're never stuck.
 
   Inside the TIMER:
     Turn            set the time (only while it isn't running)
@@ -69,7 +78,7 @@
                stopwatch is going in the background (blinking = running,
                steady = paused).
                A dot on the last big digit means the alarm is on
-               (steady = set, blinking = snoozing).
+               (and will go off at the alarm time).
   Alarm, from the outside: the alarm time, small digit "L", dot on the last digit if on.
   Timer / stopwatch, from the outside: live time, small digit "t" or "S".
   Inside, before starting: the "t" / "S" blinks.
@@ -85,6 +94,8 @@
 
 #include <Wire.h>
 #include <RTClib.h>
+#include <SPI.h>
+#include <MFRC522.h>
 
 // ---- 74HC595 pins ----
 const int DATA_PIN  = 2; // DS
@@ -99,7 +110,11 @@ const int DIGIT_PINS[5] = {5, 6, 7, 8, 9};
 const int ENC_CLK_PIN = A0;
 const int ENC_DT_PIN  = A1;
 const int ENC_SW_PIN  = A2;
-const int BUZZER_PIN  = 13;
+const int BUZZER_PIN  = A3;
+
+// ---- RFID reader (SPI: D11 MOSI, D12 MISO, D13 SCK are fixed by the Uno) ----
+const int RFID_SS_PIN = 10;
+MFRC522 rfid(RFID_SS_PIN, MFRC522::UNUSED_PIN); // RST is wired to 3.3V
 const bool ENC_REVERSE = true;  // flip this if turning right goes the wrong way
 
 RTC_DS1307 rtc;
@@ -118,6 +133,9 @@ const byte SEG_L     = 0x38; // "L" for alarm
 const byte SEG_O     = 0x3F; // "O" (for OFF)
 const byte SEG_F     = 0x71; // "F" (for OFF)
 const byte SEG_N     = 0x54; // "n" (for On)
+const byte SEG_C     = 0x39; // "C" (for CArd)
+const byte SEG_R     = 0x50; // "r" (for CArd)
+const byte SEG_D     = 0x5E; // "d" (for CArd)
 const byte DOT       = 0x80;
 
 byte displayBuffer[5];
@@ -162,20 +180,29 @@ bool swPaused = false;      // stopped with time on it (makes it flash)
 const int MINUTES_PER_DAY = 24 * 60;
 const int ALARM_STEP_MIN      = 5;    // one click while setting
 const int ALARM_FAST_STEP_MIN = 60;   // one click while spinning fast
-const unsigned long SNOOZE_MS = 9UL * MINUTE_MS;
 int alarmMinuteOfDay = 7 * 60;        // 7:00 AM until you set it
 bool alarmEnabled = false;
-bool alarmRinging = false;            // rings until you press; no time limit
-bool alarmSnoozing = false;
+bool alarmRinging = false;            // rings until the card (no time limit, no snooze)
 unsigned long ringStart = 0;
-unsigned long snoozeStart = 0;
-bool alarmPressActive = false;        // the press that stopped the ringing is still held
 int lastClockMinute = -1;             // last minute-of-day read from the RTC
 unsigned long lastAlarmCheck = 0;
-unsigned long alarmStatusUntil = 0;   // show " On" / " OFF" after a press until this time
+
+// Short messages that cover the display for a second (" On", " OFF", "CArd")
+enum StatusMsg { MSG_ON, MSG_OFF, MSG_CARD };
+StatusMsg statusMsg = MSG_ON;
+unsigned long statusUntil = 0;
 const unsigned long STATUS_MS = 1000UL;
 
+// ---- RFID card ----
+byte cardUid[10];                     // the paired card's ID
+byte cardUidSize = 0;                 // 0 = no card paired yet
+bool rfidFound = false;               // reader answered at startup
+unsigned long lastCardPoll = 0;
+const unsigned long CARD_POLL_MS = 150UL;
+unsigned long confirmBeepUntil = 0;   // short beep when a card is paired
+
 // Where the alarm is saved in the DS1307's battery-backed memory
+//   0 magic, 1 hour, 2 minute, 3 on/off, 4 card ID length, 5-14 card ID
 const uint8_t NVRAM_MAGIC = 0xA1;     // "this memory holds a saved alarm"
 
 // ---- Debounced knob button ----
@@ -270,9 +297,8 @@ void showClock() {
   else bgDot = (timerRemainingMs > 0) || (swElapsedMs > 0);
   displayBuffer[4] = (isPM ? SEG_P : SEG_A) | (bgDot ? DOT : 0);
 
-  // Alarm on? Dot on the last big digit: steady = set, blinking = snoozing.
-  bool alarmDot = alarmSnoozing ? !blinkPhase(500) : alarmEnabled;
-  if (alarmDot) displayBuffer[3] |= DOT;
+  // Alarm on? Dot on the last big digit.
+  if (alarmEnabled) displayBuffer[3] |= DOT;
 
   // Alarm going off: flash the big digits
   if (alarmRinging && blinkPhase(250)) {
@@ -280,15 +306,25 @@ void showClock() {
   }
 }
 
+void showStatus(StatusMsg msg, unsigned long ms) {
+  statusMsg = msg;
+  statusUntil = millis() + ms;
+}
+
+bool statusShowing() {
+  return (long)(statusUntil - millis()) > 0;
+}
+
+void showStatusMessage() {
+  const byte on[4]   = {SEG_BLANK, SEG_O, SEG_N, SEG_BLANK};  // " On"
+  const byte off[4]  = {SEG_BLANK, SEG_O, SEG_F, SEG_F};      // " OFF"
+  const byte card[4] = {SEG_C, SEG_A, SEG_R, SEG_D};          // "CArd"
+  const byte *text = (statusMsg == MSG_ON) ? on : (statusMsg == MSG_OFF) ? off : card;
+  for (int i = 0; i < 4; i++) displayBuffer[i] = text[i];
+  displayBuffer[4] = SEG_L;
+}
+
 void showAlarm() {
-  if ((long)(alarmStatusUntil - millis()) > 0) {   // just pressed / held: say " On" / " OFF"
-    displayBuffer[0] = SEG_BLANK;
-    displayBuffer[1] = SEG_O;
-    displayBuffer[2] = alarmEnabled ? SEG_N : SEG_F;
-    displayBuffer[3] = alarmEnabled ? SEG_BLANK : SEG_F;
-    displayBuffer[4] = SEG_L;
-    return;
-  }
   int hour24 = alarmMinuteOfDay / 60;
   int minute = alarmMinuteOfDay % 60;
   int hour = hour24 % 12;
@@ -427,6 +463,7 @@ void updateBuzzer() {
     unsigned long t = (millis() - ringStart) % 1000UL;
     if (t < 500 && (t / 100) % 2 == 0) beep = true;
   }
+  if ((long)(confirmBeepUntil - millis()) > 0) beep = true; // card paired
   digitalWrite(BUZZER_PIN, beep ? HIGH : LOW);
 }
 
@@ -445,6 +482,53 @@ void loadAlarm() {
   if (h >= 24 || m >= 60) return;
   alarmMinuteOfDay = h * 60 + m;
   alarmEnabled = rtc.readnvram(3) == 1;
+  uint8_t n = rtc.readnvram(4);
+  if (n == 4 || n == 7 || n == 10) {                // valid card ID lengths
+    for (int i = 0; i < n; i++) cardUid[i] = rtc.readnvram(5 + i);
+    cardUidSize = n;
+  }
+}
+
+void saveCard() {
+  saveAlarm();                                      // makes sure the magic byte is there
+  rtc.writenvram(4, cardUidSize);
+  for (int i = 0; i < cardUidSize; i++) rtc.writenvram(5 + i, cardUid[i]);
+}
+
+// ---- RFID ----
+// Only talks to the reader when it matters (alarm ringing, or
+// pairing on the alarm screen), a few times a second. Each check briefly
+// pauses the display, so the digits are switched off first to avoid a flicker.
+void updateCard() {
+  if (!rfidFound) return;
+  bool waitingForCard = alarmRinging;
+  bool pairing = inside && screen == ALARM_SCREEN;
+  if (!waitingForCard && !pairing) return;
+  unsigned long now = millis();
+  if (now - lastCardPoll < CARD_POLL_MS) return;
+  lastCardPoll = now;
+
+  digitalWrite(DIGIT_PINS[muxIndex], HIGH);         // display off for the few ms this takes
+  if (!rfid.PICC_IsNewCardPresent() || !rfid.PICC_ReadCardSerial()) return;
+  byte n = rfid.uid.size;
+  rfid.PICC_HaltA();                                // card stays quiet until it's taken away
+  if (n > 10) return;
+
+  if (waitingForCard) {
+    bool match = (cardUidSize > 0 && n == cardUidSize);
+    for (int i = 0; match && i < n; i++) if (rfid.uid.uidByte[i] != cardUid[i]) match = false;
+    if (match) {                                    // the right card: off until tomorrow
+      alarmRinging = false;
+      showStatus(MSG_OFF, STATUS_MS);
+    }
+  } else {                                          // pairing: remember this card
+    for (int i = 0; i < n; i++) cardUid[i] = rfid.uid.uidByte[i];
+    cardUidSize = n;
+    saveCard();
+    showStatus(MSG_CARD, STATUS_MS);
+    confirmBeepUntil = now + 150;
+    lastInputMs = now;
+  }
 }
 
 // Same idea as the timer: every click lands on a round number, wrapping past midnight.
@@ -460,7 +544,6 @@ void stepAlarm(int direction, bool fast) {
 
 void startRinging(unsigned long now) {
   alarmRinging = true;
-  alarmSnoozing = false;
   ringStart = now;
   screen = CLOCK_SCREEN;   // show the clock, wherever you were
   inside = false;
@@ -469,9 +552,6 @@ void startRinging(unsigned long now) {
 
 void updateAlarm() {
   unsigned long now = millis();
-
-  // Snooze over: ring again
-  if (alarmSnoozing && now - snoozeStart >= SNOOZE_MS) startRinging(now);
 
   // Check the RTC twice a second. Ring when the clock ROLLS OVER into the alarm
   // minute, so it doesn't ring right away if you set it for the current minute
@@ -515,23 +595,19 @@ void handleInput() {
 
   if (clicks != 0 || knobBtn.wentDown) lastInputMs = now;
 
-  // ---- Alarm ringing: only a press stops it (turning is ignored) ----
-  if (alarmRinging && knobBtn.wentDown) {
-    alarmRinging = false;          // quiet as soon as you press...
-    alarmSnoozing = true;          // ...and snooze, unless you keep holding
-    snoozeStart = now;
-    alarmPressActive = true;
-    holdHandled = false;
-  }
-  if (alarmPressActive) {
-    if (knobBtn.stable == LOW && !holdHandled && now - knobBtn.downSince >= HOLD_MS) {
-      alarmSnoozing = false;       // held: off until tomorrow
-      holdHandled = true;
+  // ---- Alarm ringing: only the card stops it ----
+  if (alarmRinging) {
+    if (knobBtn.wentDown) {
+      holdHandled = true;          // this press does nothing else, even after it stops
+      if (cardUidSize == 0) {
+        alarmRinging = false;      // no card paired yet: a press turns it off
+        showStatus(MSG_OFF, STATUS_MS);
+      } else {
+        showStatus(MSG_CARD, STATUS_MS); // card paired: "go get the card"
+      }
     }
-    if (knobBtn.wentUp) alarmPressActive = false;
-    return;                        // this press does nothing else
+    return;                        // turning while it rings does nothing
   }
-  if (alarmRinging) return;        // turning while it rings does nothing
 
   // Any press or turn while the timer is beeping just silences it.
   if (timerBeeping && (clicks != 0 || knobBtn.wentDown)) {
@@ -549,7 +625,7 @@ void handleInput() {
       if (screen == TIMER_SCREEN && !timerRunning) {
         stepTimer(clicks, fast);               // setting the timer
       } else if (screen == ALARM_SCREEN) {
-        alarmStatusUntil = now;                // turning: back to the time right away
+        statusUntil = now;                     // turning: back to the time right away
         stepAlarm(clicks, fast);               // setting the alarm
       } else {
         stepOut(now, true);                    // running timer or stopwatch: step back out
@@ -584,12 +660,9 @@ void handleInput() {
       }
     } else if (inside && screen == ALARM_SCREEN) {
       alarmEnabled = false;                      // hold: alarm off, step out
-      alarmSnoozing = false;
-      alarmStatusUntil = now + STATUS_MS;        // say " OFF" for a second
+      showStatus(MSG_OFF, STATUS_MS);
       saveAlarm();
       stepOut(now, false);
-    } else if (screen == CLOCK_SCREEN && alarmSnoozing) {
-      alarmSnoozing = false;                     // up already: cancel the snooze
     }
   }
 
@@ -617,7 +690,7 @@ void handleInput() {
       }
     } else if (screen == ALARM_SCREEN) {
       alarmEnabled = true;                       // press: done, alarm on, step out
-      alarmStatusUntil = now + STATUS_MS;        // say " On" for a second
+      showStatus(MSG_ON, STATUS_MS);
       saveAlarm();
       stepOut(now, false);
     }
@@ -670,6 +743,19 @@ void setup() {
   }
 
   loadAlarm();
+
+  SPI.begin();
+  rfid.PCD_Init();
+  byte v = rfid.PCD_ReadRegister(MFRC522::VersionReg);
+  rfidFound = (v != 0x00 && v != 0xFF);             // no reader wired up: skip it
+  if (rfidFound) {
+    // Give up waiting for a card after 5 ms instead of 25 ms, so checking for
+    // one barely pauses the display (the reader's timer ticks every 25 us).
+    rfid.PCD_WriteRegister(MFRC522::TReloadRegH, 0);
+    rfid.PCD_WriteRegister(MFRC522::TReloadRegL, 200);
+  } else {
+    Serial.println("No RFID reader found - check wiring (it needs 3.3V).");
+  }
   showClock();
 }
 
@@ -680,18 +766,24 @@ void loop() {
   updateTimer();
   updateStopwatch();
   updateAlarm();
+  updateCard();
   updateBuzzer();
 
   // Refresh what's on the display (timer/stopwatch and flashing need faster
   // updates than the clock). Also refresh right away whenever the screen changes.
   static Screen shownScreen = CLOCK_SCREEN;
   static bool shownInside = false;
+  static bool shownStatus = false;
+  bool status = statusShowing();
   unsigned long refreshMs = (screen == CLOCK_SCREEN && !alarmRinging) ? 250 : 50;
-  if (screen != shownScreen || inside != shownInside || now - lastDisplayUpdate >= refreshMs) {
+  if (screen != shownScreen || inside != shownInside || status != shownStatus ||
+      now - lastDisplayUpdate >= refreshMs) {
     shownScreen = screen;
     shownInside = inside;
+    shownStatus = status;
     lastDisplayUpdate = now;
-    if (screen == CLOCK_SCREEN) showClock();
+    if (status) showStatusMessage();
+    else if (screen == CLOCK_SCREEN) showClock();
     else if (screen == TIMER_SCREEN) showTimer();
     else if (screen == STOPWATCH_SCREEN) showStopwatch();
     else showAlarm();

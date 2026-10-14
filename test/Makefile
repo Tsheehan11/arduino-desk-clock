@@ -5,7 +5,7 @@ CXX ?= g++
 test: test_dial
 	./test_dial
 
-test_dial: test_dial.cpp arduino_stub.h mock/RTClib.h mock/Wire.h ../firmware/desk_clock_dial/desk_clock_dial.ino
+test_dial: test_dial.cpp arduino_stub.h mock/RTClib.h mock/Wire.h mock/SPI.h mock/MFRC522.h ../firmware/desk_clock_dial/desk_clock_dial.ino
 	$(CXX) -std=gnu++17 -Imock -w test_dial.cpp -o test_dial
 
 clean:

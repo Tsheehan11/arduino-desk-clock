@@ -1,16 +1,17 @@
 # Arduino Desk Clock
 
-A desk clock with an alarm, countdown timer and stopwatch, built on an Arduino Uno from starter-kit parts. A 4-digit 7-segment display shows the time, a 1-digit display shows AM/PM (or extra timer detail), and everything is controlled with a single rotary knob.
+A desk clock with an alarm, countdown timer and stopwatch, built on an Arduino Uno from starter-kit parts. A 4-digit 7-segment display shows the time, a 1-digit display shows AM/PM (or extra timer detail), and everything is controlled with a single rotary knob. The alarm can only be turned off by tapping an RFID card, so you can keep the card in another room and have to get out of bed for it.
 
 ## Features
 
 - **Clock**: 12-hour time kept by a DS1307 real-time clock (keeps time through power loss with its coin cell), blinking separator, AM/PM digit.
-- **Alarm**: set to the nearest 5 minutes and saved in the RTC's battery-backed memory, so it survives unplugging. It rings (beep-beep-beep) and flashes the clock until you press the knob: press to snooze for 9 minutes, hold to turn it off until tomorrow. Turning the knob doesn't stop it.
+- **Alarm**: set to the nearest 5 minutes and saved in the RTC's battery-backed memory, so it survives unplugging. It rings (beep-beep-beep) and flashes the clock with no time limit and no snooze.
+- **RFID card off switch**: once a card is paired, tapping it on the RC522 reader is the only way to stop the alarm. The knob does nothing while it rings, so there's no turning it off half asleep. Until a card is paired, a press of the knob turns it off.
 - **Countdown timer**: set with the knob from 5 seconds up to 99 hours 55 minutes. Step size scales with the time (5 s steps under a minute, up to 5 min steps over an hour), and every value lands on a round number. A fast spin takes bigger jumps.
 - **Stopwatch**: up to 99:59:59.
 - **Live detail on the small digit**: tenths of a second under an hour; over an hour, a 6-segment "ring" where each segment is 10 seconds (it empties for the timer and fills for the stopwatch).
 - **Timer done**: buzzer and flashing display when the timer ends, from any screen, for up to 30 seconds.
-- **Background indicators**: a dot on the clock's AM/PM digit blinks while the timer or stopwatch runs in the background; a dot on the last big digit shows the alarm is on (blinking while snoozed).
+- **Background indicators**: a dot on the clock's AM/PM digit blinks while the timer or stopwatch runs in the background; a dot on the last big digit shows the alarm is on.
 - **One-knob interface**: turn to pick a screen, press to go in.
 
 ## Controls
@@ -23,15 +24,17 @@ Turn the knob to cycle **Clock → Timer → Stopwatch → Alarm**. The small di
 | **Press** | start / pause | start / stop | done: alarm **on**, step out (shows ` On`) |
 | **Hold 1 s** | started: reset · still setting: step out and keep the time | reset · at 00.00: step out | alarm **off**, step out (shows ` OFF`) |
 
-**When the alarm goes off** (it rings until you press):
+**Pairing the card**: go into the Alarm screen and tap the card on the reader. The display shows `CArd` and beeps. Tapping a different card the same way replaces it. The card's ID is saved in the RTC's memory.
 
-| | |
-|---|---|
-| **Press** | snooze 9 minutes |
-| **Hold 1 s** | off until tomorrow |
-| **Turn** | nothing, so bumping the knob won't stop it |
+**When the alarm goes off** (no snooze, no time limit):
 
-While snoozing, hold the knob on the clock screen to cancel the snooze.
+| | Card paired | No card paired yet |
+|---|---|---|
+| **Tap the card** | off until tomorrow (shows ` OFF`) | |
+| **Press / hold** | nothing (shows `CArd` as a reminder) | off until tomorrow |
+| **Turn** | nothing | nothing |
+
+Unplugging the clock also stops it.
 
 - Stepping out never stops anything; the timer and stopwatch keep running.
 - Just peeking at a screen (not pressed in) returns to the clock after 5 seconds.
@@ -46,7 +49,7 @@ While snoozing, hold the knob on the clock screen to cancel the snooze.
 | Big digits flashing | paused / stopped |
 | `t` or `S` blinking | inside, not started yet |
 | Dot on the last digit (clock or alarm screen) | alarm on (no dot = off) |
-| Blinking dot on the last clock digit | alarm snoozing |
+| `CArd` | card paired, or "tap the card to stop the alarm" |
 
 ## Hardware
 
@@ -59,6 +62,7 @@ While snoozing, hold the knob on the clock screen to cancel the snooze.
 | DS1307 RTC module | timekeeping (I2C) |
 | Rotary encoder module (KY-040 style) | the knob |
 | Active buzzer | alarm and timer |
+| RC522 RFID reader + card or fob (13.56 MHz) | turns the alarm off |
 | 5 × 220 Ω resistors | one per digit |
 | Breadboard + jumper wires | |
 
@@ -71,6 +75,7 @@ flowchart LR
   RTC[DS1307 RTC]
   ENC[Rotary encoder]
   BZ[Buzzer]
+  RF[RC522 RFID]
   UNO -- "D2 D3 D4 (data, latch, clock)" --> SR
   SR -- "segments A-G, DP (shared)" --> D4
   SR -- "segments A-G, DP (shared)" --> D1
@@ -78,7 +83,8 @@ flowchart LR
   UNO -- "D9 via 220 Ω" --> D1
   UNO <-- "A4 SDA / A5 SCL" --> RTC
   ENC -- "A0 CLK, A1 DT, A2 SW" --> UNO
-  UNO -- D13 --> BZ
+  UNO -- A3 --> BZ
+  UNO <-- "SPI: D10 SS, D11 MOSI, D12 MISO, D13 SCK" --> RF
 ```
 
 ### Wiring
@@ -104,21 +110,38 @@ flowchart LR
 
 **Encoder**: CLK → A0 · DT → A1 · SW → A2 · + → 5V · GND → GND
 
-**Buzzer**: + → D13 · − → GND
+**Buzzer**: + → A3 · − → GND
+
+**RC522 RFID** (female-to-male wires; this is *not* the kit lesson's wiring, since D9 is already a display digit):
+
+| RC522 pin | Arduino |
+|---|---|
+| SDA | D10 |
+| SCK | D13 |
+| MOSI | D11 |
+| MISO | D12 |
+| IRQ | not connected |
+| GND | GND |
+| RST | 3.3V |
+| 3.3V | 3.3V (not 5V) |
+
+With this, every pin is used except D0/D1 (USB serial).
 
 ## How it works
 
 - **Multiplexing**: all five digits share the same 8 segment lines from the 74HC595. The sketch lights one digit at a time for 2 ms (by pulling its common cathode low through a 220 Ω resistor) and cycles through all five fast enough that they look solid.
 - **No blocking code**: everything runs off `millis()` (display refresh, knob reading, timer, stopwatch, buzzer pattern), so the display never flickers while the knob is being used.
+- **Reading the card without flicker**: the sketch only talks to the RFID reader while the alarm is ringing or you're on the Alarm screen, about 7 times a second. Each check briefly holds up the display, so the reader's "no card" timeout is cut from 25 ms to 5 ms and the digits are switched off during the check.
 - **Knob decoding**: a quadrature state table accumulates encoder transitions and only counts a click when the knob settles in a detent, which filters out contact bounce.
 - **Design changes from the original plan**: the kit's MAX7219 turned out to be a dot-matrix module, so a 74HC595 drives the segments instead. The kit's ULN2003 board only exposes 4 inputs (5 digits are needed), so the digits are driven straight from Arduino pins; the 220 Ω resistors keep each digit around 15 mA, within what a pin can sink.
 
 ## Getting started
 
 1. Wire it up as above.
-2. In the Arduino IDE, install **RTClib** (by Adafruit) from the Library Manager.
+2. In the Arduino IDE, install **RTClib** (by Adafruit) and **MFRC522** (by GithubCommunity) from the Library Manager.
 3. Upload `firmware/set_rtc_time` once to set the RTC to your computer's clock.
 4. Upload `firmware/desk_clock_dial`.
+5. Go into the Alarm screen and tap your card to pair it.
 
 If turning the knob right goes the wrong way, flip `ENC_REVERSE` at the top of the sketch.
 
@@ -126,11 +149,11 @@ If turning the knob right goes the wrong way, flip `ENC_REVERSE` at the top of t
 
 ## Simulation
 
-`sim/diagram.json` is a [Wokwi](https://wokwi.com) circuit: create a new Arduino Uno project, paste it into `diagram.json`, paste the sketch into `sketch.ino`, and add RTClib.
+`sim/diagram.json` is a [Wokwi](https://wokwi.com) circuit: create a new Arduino Uno project, paste it into `diagram.json`, paste the sketch into `sketch.ino`, and add RTClib and MFRC522. Wokwi has no RC522 part, so the sketch notices the reader is missing and a knob press turns the alarm off.
 
 ## Tests
 
-The sketch's logic can be tested on a computer without the Arduino. `test/` compiles the real sketch against a small fake Arduino (pins, `millis()`, RTC) and simulates turning and pressing the knob: screen navigation, step sizes, timer countdown and beeping, stopwatch, pause flashing, the ring and tenths display, auto-return to the clock, and the alarm (setting it, ringing on time, ringing with no time limit, snooze, dismiss, and surviving a power cut). The fake RTC can jump the time forward, so a whole morning of alarms runs in under a second.
+The sketch's logic can be tested on a computer without the Arduino. `test/` compiles the real sketch against a small fake Arduino (pins, `millis()`, RTC, RFID reader) and simulates turning and pressing the knob and tapping cards: screen navigation, step sizes, timer countdown and beeping, stopwatch, pause flashing, the ring and tenths display, auto-return to the clock, and the alarm (setting it, ringing on time, ringing with no time limit, and surviving a power cut), and the RFID card (pairing, only the right card stops it, the knob can't, replacing the card). The fake RTC can jump the time forward, so a whole morning of alarms runs in under a second.
 
 ```sh
 cd test
